@@ -436,11 +436,38 @@ pub const Utf8Cipher = struct {
         @memcpy(prev_ciphertext_bytes[0..iv.len], &iv);
 
         while (it.nextCodepoint()) |cp| {
-            // Create chained tweak: base_tweak:pos:N:chain:HEX(prev_bytes)
+            // Create chained tweak: base_tweak:pos:N:chain:<binary_prev_bytes>
             var tweak_buf: [TWEAK_BUFFER_SIZE]u8 = undefined;
-            const chained_tweak = std.fmt.bufPrint(&tweak_buf, "{s}:pos:{d}:chain:{x}", .{ tweak, pos, prev_ciphertext_bytes[0..prev_len] }) catch {
+            var tweak_pos: usize = 0;
+
+            // Append base tweak
+            @memcpy(tweak_buf[tweak_pos..][0..tweak.len], tweak);
+            tweak_pos += tweak.len;
+
+            // Append ":pos:"
+            const pos_prefix = ":pos:";
+            @memcpy(tweak_buf[tweak_pos..][0..pos_prefix.len], pos_prefix);
+            tweak_pos += pos_prefix.len;
+
+            // Append position as decimal string
+            const pos_str = std.fmt.bufPrint(tweak_buf[tweak_pos..], "{d}", .{pos}) catch {
                 return error.TweakBufferOverflow;
             };
+            tweak_pos += pos_str.len;
+
+            // Append ":chain:"
+            const chain_prefix = ":chain:";
+            @memcpy(tweak_buf[tweak_pos..][0..chain_prefix.len], chain_prefix);
+            tweak_pos += chain_prefix.len;
+
+            // Append previous ciphertext bytes (binary, not hex-encoded)
+            if (tweak_pos + prev_len > TWEAK_BUFFER_SIZE) {
+                return error.TweakBufferOverflow;
+            }
+            @memcpy(tweak_buf[tweak_pos..][0..prev_len], prev_ciphertext_bytes[0..prev_len]);
+            tweak_pos += prev_len;
+
+            const chained_tweak = tweak_buf[0..tweak_pos];
 
             // Encrypt code point with chained tweak
             const encrypted_cp = try self.encryptCodepoint(cp, chained_tweak);
@@ -499,11 +526,38 @@ pub const Utf8Cipher = struct {
                 return error.InvalidUtf8;
             };
 
-            // Create same chained tweak as encryption
+            // Create same chained tweak as encryption (binary concatenation)
             var tweak_buf: [TWEAK_BUFFER_SIZE]u8 = undefined;
-            const chained_tweak = std.fmt.bufPrint(&tweak_buf, "{s}:pos:{d}:chain:{x}", .{ tweak, pos, prev_ciphertext_bytes[0..prev_len] }) catch {
+            var tweak_pos: usize = 0;
+
+            // Append base tweak
+            @memcpy(tweak_buf[tweak_pos..][0..tweak.len], tweak);
+            tweak_pos += tweak.len;
+
+            // Append ":pos:"
+            const pos_prefix = ":pos:";
+            @memcpy(tweak_buf[tweak_pos..][0..pos_prefix.len], pos_prefix);
+            tweak_pos += pos_prefix.len;
+
+            // Append position as decimal string
+            const pos_str = std.fmt.bufPrint(tweak_buf[tweak_pos..], "{d}", .{pos}) catch {
                 return error.TweakBufferOverflow;
             };
+            tweak_pos += pos_str.len;
+
+            // Append ":chain:"
+            const chain_prefix = ":chain:";
+            @memcpy(tweak_buf[tweak_pos..][0..chain_prefix.len], chain_prefix);
+            tweak_pos += chain_prefix.len;
+
+            // Append previous ciphertext bytes (binary, not hex-encoded)
+            if (tweak_pos + prev_len > TWEAK_BUFFER_SIZE) {
+                return error.TweakBufferOverflow;
+            }
+            @memcpy(tweak_buf[tweak_pos..][0..prev_len], prev_ciphertext_bytes[0..prev_len]);
+            tweak_pos += prev_len;
+
+            const chained_tweak = tweak_buf[0..tweak_pos];
 
             // Decrypt code point with chained tweak
             const decrypted_cp = try self.decryptCodepoint(cp, chained_tweak);

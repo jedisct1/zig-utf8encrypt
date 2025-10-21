@@ -111,6 +111,48 @@ Performance varies by UTF-8 class due to different encryption methods:
 - Class 3: ~1.03 average cycle-walking iterations
 - Class 4: ~16 average cycle-walking iterations
 
+## Sample Output
+
+Here are examples showing actual input text and encrypted output:
+
+### ASCII Text
+
+```
+Plaintext:  Hello, World! (13 bytes)
+Ciphertext: L;ba>{AeiWr (13 bytes)
+```
+
+The encrypted text maintains the exact byte length and remains valid UTF-8, but the content is transformed.
+
+### Multi-Byte UTF-8 (Latin + Chinese)
+
+```
+Plaintext:  Héllo 世界 (13 bytes)
+Ciphertext: LȦ.O@䧵 (13 bytes)
+```
+
+Characters from different UTF-8 classes are encrypted while preserving their byte-length classes. The Chinese characters (3 bytes each) remain 3-byte UTF-8 characters in the output.
+
+### Emoji (4-Byte UTF-8)
+
+```
+Plaintext:  🌍 emoji test 🚀 (20 bytes)
+Ciphertext: 񃻸RhufBh]E񄃂 (20 bytes)
+```
+
+Emojis are 4-byte UTF-8 sequences that encrypt to other 4-byte UTF-8 sequences, maintaining the byte structure.
+
+### Accented Characters
+
+```
+Plaintext:  Café résumé naïve (21 bytes)
+Ciphertext: ~Ԟtݛ]0و>tM¸+ (21 bytes)
+```
+
+Latin characters with diacritics (é, ï) are 2-byte UTF-8 sequences that encrypt to other 2-byte sequences.
+
+**Note:** The encrypted output shown above is deterministic for a given key and tweak. Different keys, tweaks, or positions will produce different ciphertexts.
+
 ## Examples
 
 ### Basic Encryption/Decryption
