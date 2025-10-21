@@ -72,7 +72,7 @@ The library divides Unicode code points into 4 classes based on UTF-8 byte lengt
 The library uses a CBC-like chaining mode:
 
 - IV Generation: `IV = TurboSHAKE128(base_tweak)[0..16]`
-- Chained Tweaks: `tweak_i = "{base_tweak}:pos:{i}:chain:{hex(C_{i-1})}"`
+- Chained Tweaks: `tweak_i = base_tweak || ":pos:" || i || ":chain:" || C_{i-1}` (binary concatenation)
 - Identical plaintexts at different positions produce different ciphertexts
 
 ## Use Cases
