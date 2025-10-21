@@ -1,4 +1,4 @@
-# zig-utf8encrypt
+# utf8encrypt
 
 A Zig library for UTF-8 length-preserving encryption that encrypts UTF-8 text while preserving valid UTF-8 encoding and exact byte length.
 
