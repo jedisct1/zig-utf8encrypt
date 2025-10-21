@@ -7,7 +7,7 @@ pub fn main() !void {
     const allocator = gpa.allocator();
 
     std.debug.print("UTF-8 Length-Preserving Encryption Demo\n", .{});
-    std.debug.print("========================================\n\n", .{});
+    std.debug.print("=======================================\n\n", .{});
 
     // Generate a random key
     const key: [16]u8 = @splat(0x2B);
