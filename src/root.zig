@@ -86,7 +86,7 @@ pub const SBOX_COUNT: u32 = fast.SBOX_POOL_SIZE;
 /// Domain sizes for each UTF-8 class
 pub const DOMAIN_SIZE_CLASS1: u32 = 128; // U+0000 - U+007F
 pub const DOMAIN_SIZE_CLASS2: u32 = 1920; // U+0080 - U+07FF
-pub const DOMAIN_SIZE_CLASS3: u32 = 63488; // U+0800 - U+FFFF (excluding surrogates)
+pub const DOMAIN_SIZE_CLASS3: u32 = 61440; // U+0800 - U+FFFF (excluding surrogates)
 pub const DOMAIN_SIZE_CLASS4: u32 = 1048576; // U+10000 - U+10FFFF
 
 /// Buffer sizes for encryption/decryption
@@ -226,20 +226,20 @@ fn cpToIndexClass3(cp: u21) u32 {
     std.debug.assert(!(cp >= 0xD800 and cp <= 0xDFFF)); // No surrogates
 
     if (cp < 0xD800) {
-        return @as(u32, cp - 0x800); // 0x800..0xD7FF -> 0..55295
+        return @as(u32, cp - 0x800); // 0x800..0xD7FF -> 0..53247
     } else {
-        return @as(u32, cp - 0xE000 + 55296); // 0xE000..0xFFFF -> 55296..63487
+        return @as(u32, cp - 0xE000 + 53248); // 0xE000..0xFFFF -> 53248..61439
     }
 }
 
 /// Map domain index back to code point for Class 3
 fn indexToCpClass3(idx: u32) u21 {
-    std.debug.assert(idx < DOMAIN_SIZE_CLASS3); // 55296 + 8192
+    std.debug.assert(idx < DOMAIN_SIZE_CLASS3); // 53248 + 8192
 
-    if (idx < 55296) {
+    if (idx < 53248) {
         return @as(u21, @intCast(idx + 0x800)); // -> 0x800..0xD7FF
     } else {
-        return @as(u21, @intCast(idx - 55296 + 0xE000)); // -> 0xE000..0xFFFF
+        return @as(u21, @intCast(idx - 53248 + 0xE000)); // -> 0xE000..0xFFFF
     }
 }
 
