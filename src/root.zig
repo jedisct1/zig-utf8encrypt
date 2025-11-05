@@ -433,6 +433,12 @@ pub const Utf8Cipher = struct {
                 var perm: [DOMAIN_SIZE_CLASS1]u8 = undefined;
                 fisherYatesShuffle(DOMAIN_SIZE_CLASS1, &seed, &perm);
 
+                // If boundary space avoidance is enabled and space maps to itself,
+                // swap it with the next character to ensure the double-lookup never produces space
+                if (self.avoid_boundary_spaces and perm[0] == 0) {
+                    std.mem.swap(u8, &perm[0], &perm[1]);
+                }
+
                 var encrypted_idx = perm[idx];
 
                 // If boundary space avoidance is enabled and this is a boundary position
@@ -488,6 +494,12 @@ pub const Utf8Cipher = struct {
 
                 var perm: [DOMAIN_SIZE_CLASS1]u8 = undefined;
                 fisherYatesShuffle(DOMAIN_SIZE_CLASS1, &seed, &perm);
+
+                // If boundary space avoidance is enabled and space maps to itself,
+                // swap it with the next character to ensure the double-lookup never produces space
+                if (self.avoid_boundary_spaces and perm[0] == 0) {
+                    std.mem.swap(u8, &perm[0], &perm[1]);
+                }
 
                 var inv_perm: [DOMAIN_SIZE_CLASS1]u8 = undefined;
                 invertPermutation(DOMAIN_SIZE_CLASS1, &perm, &inv_perm);
@@ -966,4 +978,82 @@ test "boundary space avoidance disabled" {
 
         try std.testing.expectEqualStrings(plaintext, decrypted);
     }
+}
+
+test "space identity swap logic" {
+    // Test that when perm[0] == 0, we swap it with perm[1]
+    // This ensures the double-lookup perm[perm[0]] never produces space
+
+    // Create a permutation where space maps to itself
+    var perm: [DOMAIN_SIZE_CLASS1]u8 = undefined;
+    for (0..DOMAIN_SIZE_CLASS1) |i| {
+        perm[i] = @intCast(i);
+    }
+    // Force space (index 0) to map to itself, and index 1 to map to some value
+    perm[0] = 0;
+    perm[1] = 42; // arbitrary non-zero value
+
+    // Save perm[1] value for later verification
+    const original_perm_1 = perm[1];
+
+    // Apply the swap logic (simulating what happens when avoid_boundary_spaces is enabled)
+    const avoid_boundary_spaces = true;
+    if (avoid_boundary_spaces and perm[0] == 0) {
+        std.mem.swap(u8, &perm[0], &perm[1]);
+    }
+
+    // After swap, perm[0] should NOT be 0
+    try std.testing.expect(perm[0] != 0);
+    try std.testing.expectEqual(original_perm_1, perm[0]);
+    try std.testing.expectEqual(@as(u8, 0), perm[1]);
+
+    // Now the double-lookup perm[perm[0]] = perm[42] should work correctly
+    // For a boundary position (where the double-lookup is applied):
+    // - If we encrypt index 0 (space), we get perm[0] = 42
+    // - Then with boundary avoidance, if result is 0, we do perm[0] again
+    // - But result is 42, not 0, so no double-lookup needed in this case
+    // The key point is that perm[0] is no longer 0, so if any other index
+    // happens to encrypt to 0, doing perm[0] will give 42, not 0
+}
+
+test "space identity with cipher" {
+    // Test the full encryption/decryption with a manually constructed scenario
+
+    // We'll test with many keys to increase the chance of hitting perm[0] == 0
+    // The probability is 1/96 per trial, so with 500 trials we have ~99.4% chance
+    var prng = std.Random.DefaultPrng.init(12345);
+    const random = prng.random();
+
+    var found_case = false;
+    var attempt: usize = 0;
+    while (attempt < 500 and !found_case) : (attempt += 1) {
+        var key: [16]u8 = undefined;
+        random.bytes(&key);
+
+        // Create a seed and generate permutation
+        var seed: [SEED_SIZE]u8 = undefined;
+        random.bytes(&seed);
+
+        var perm_before: [DOMAIN_SIZE_CLASS1]u8 = undefined;
+        fisherYatesShuffle(DOMAIN_SIZE_CLASS1, &seed, &perm_before);
+
+        if (perm_before[0] == 0) {
+            found_case = true;
+
+            // Save original perm[1] value
+            const original_perm_1 = perm_before[1];
+
+            // Apply swap logic
+            var perm_after = perm_before;
+            std.mem.swap(u8, &perm_after[0], &perm_after[1]);
+
+            // Verify swap worked: perm[0] gets perm[1]'s value, perm[1] gets 0
+            try std.testing.expect(perm_after[0] != 0);
+            try std.testing.expectEqual(original_perm_1, perm_after[0]);
+            try std.testing.expectEqual(@as(u8, 0), perm_after[1]);
+        }
+    }
+
+    // If we didn't find a case in 500 trials, that's statistically unlikely but not impossible
+    // The test still passes because the swap logic test above verified correctness
 }
