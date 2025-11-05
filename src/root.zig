@@ -47,7 +47,7 @@ pub const Utf8EncryptError = error{
 /// UTF-8 byte-length classes
 /// Each Unicode code point belongs to one of 4 classes based on its UTF-8 byte length
 pub const Utf8Class = enum(u2) {
-    /// 1-byte UTF-8: U+0000 - U+007F (ASCII, 128 values)
+    /// 1-byte UTF-8: U+0000 - U+007F (ASCII, control chars < 32 not encrypted, 96 encrypted values)
     class1 = 0,
     /// 2-byte UTF-8: U+0080 - U+07FF (1,920 values)
     class2 = 1,
@@ -86,7 +86,7 @@ pub const WORD_LEN_CLASS4: u32 = 3; // 256^3 = 16777216 > 1048576
 pub const SBOX_COUNT: u32 = fast.SBOX_POOL_SIZE;
 
 /// Domain sizes for each UTF-8 class
-pub const DOMAIN_SIZE_CLASS1: u32 = 128; // U+0000 - U+007F
+pub const DOMAIN_SIZE_CLASS1: u32 = 96; // U+0020 - U+007F (printable ASCII, control chars are not encrypted)
 pub const DOMAIN_SIZE_CLASS2: u32 = 1920; // U+0080 - U+07FF
 pub const DOMAIN_SIZE_CLASS3: u32 = 61440; // U+0800 - U+FFFF (excluding surrogates)
 pub const DOMAIN_SIZE_CLASS4: u32 = 1048576; // U+10000 - U+10FFFF
@@ -270,17 +270,17 @@ fn cycleWalk(
     return error.CipherError;
 }
 
-/// Map code point to domain index for Class 1 (ASCII)
-/// Domain: U+0000 - U+007F
+/// Map code point to domain index for Class 1 (printable ASCII)
+/// Domain: U+0020 - U+007F (control characters < 32 are not encrypted)
 fn cpToIndexClass1(cp: u21) u32 {
-    std.debug.assert(cp < 0x80);
-    return @as(u32, cp);
+    std.debug.assert(cp >= 32 and cp < 0x80);
+    return @as(u32, cp - 32);
 }
 
 /// Map domain index back to code point for Class 1
 fn indexToCpClass1(idx: u32) u21 {
     std.debug.assert(idx < DOMAIN_SIZE_CLASS1);
-    return @as(u21, @intCast(idx));
+    return @as(u21, @intCast(idx + 32));
 }
 
 /// Map code point to domain index for Class 2
@@ -410,6 +410,11 @@ pub const Utf8Cipher = struct {
 
         switch (class) {
             .class1 => {
+                // Control characters (code < 32) are not encrypted
+                if (cp < 32) {
+                    return cp;
+                }
+
                 const idx = cpToIndexClass1(cp);
                 // For class1, generate a tweak-dependent permutation with seed
                 var seed: [SEED_SIZE]u8 = undefined;
@@ -453,6 +458,11 @@ pub const Utf8Cipher = struct {
 
         switch (class) {
             .class1 => {
+                // Control characters (code < 32) are not encrypted
+                if (cp < 32) {
+                    return cp;
+                }
+
                 const idx = cpToIndexClass1(cp);
                 // For class1, generate same tweak-dependent permutation with seed
                 var seed: [SEED_SIZE]u8 = undefined;
