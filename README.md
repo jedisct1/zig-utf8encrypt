@@ -9,6 +9,7 @@ A Zig library for UTF-8 length-preserving encryption that encrypts UTF-8 text wh
 - Valid UTF-8 Output: Encrypted text is guaranteed to be valid UTF-8
 - Byte-Length Preservation: Output has identical byte count as input
 - Class Preservation: Each code point stays within its UTF-8 byte-length class (1-4 bytes)
+- Control Character Passthrough: ASCII control characters (codes 0-31) are preserved unchanged for structural integrity
 - Content-Dependent Permutation: Character class sequence is shuffled based on key and content to hide structural patterns
 
 ## Quick Start
@@ -52,30 +53,35 @@ The library divides Unicode code points into 4 classes based on UTF-8 byte lengt
 
 | Class | Code Point Range   | UTF-8 Bytes | Domain Size | Encryption Method                          |
 | ----- | ------------------ | ----------- | ----------- | ------------------------------------------ |
-| 1     | U+0000 - U+007F    | 1 byte      | 128         | Fisher-Yates permutation (tweak-dependent) |
+| 1     | U+0000 - U+007F    | 1 byte      | 96*         | Fisher-Yates permutation (tweak-dependent) |
 | 2     | U+0080 - U+07FF    | 2 bytes     | 1,920       | FAST cipher + cycle walking                |
-| 3     | U+0800 - U+FFFF*   | 3 bytes     | 61,440      | FAST cipher + cycle walking                |
+| 3     | U+0800 - U+FFFF    | 3 bytes     | 61,440      | FAST cipher + cycle walking                |
 | 4     | U+10000 - U+10FFFF | 4 bytes     | 1,048,576   | FAST cipher + cycle walking                |
 
-\* Class 3 excludes surrogates U+D800 - U+DFFF (invalid in UTF-8)
+Class 1 control characters (U+0000 - U+001F, codes 0-31) are not encrypted and pass through unchanged. Only printable ASCII (U+0020 - U+007F, codes 32-127) are encrypted.
+
+Class 3 excludes surrogates U+D800 - U+DFFF (invalid in UTF-8)
 
 ### Encryption Process
 
 1. Code Point Classification: Each code point is classified into one of the 4 byte-length classes
-2. Domain Mapping: Code points are mapped to domain indices (0..N-1) within their class
-3. Format-Preserving Encryption:
-   - Class 1 (ASCII): Uses Fisher-Yates shuffle with 256-bit seed from TurboSHAKE128
+2. Control Character Passthrough: Class 1 control characters (codes 0-31) are preserved unchanged
+3. Domain Mapping: Code points are mapped to domain indices (0..N-1) within their class
+4. Format-Preserving Encryption:
+   - Class 1 (printable ASCII): Uses Fisher-Yates shuffle with 256-bit seed from TurboSHAKE128
    - Classes 2-4: Uses FAST cipher with cycle walking until result falls within valid domain
-4. Chaining: Position-dependent tweaks incorporate previous ciphertext bytes (CBC-like mode)
-5. Content-Dependent Permutation: The order of encrypted code points is shuffled based on:
+5. Chaining: Position-dependent tweaks incorporate previous ciphertext bytes (CBC-like mode)
+   - Note: Control characters participate in chaining even though they're not encrypted
+6. Content-Dependent Permutation: The order of encrypted code points is shuffled based on:
    - Sorted encrypted code points (for deterministic permutation derivation)
    - Encryption key (for key-dependent permutation)
    - Fisher-Yates shuffle with TurboSHAKE128 as PRNG
-6. UTF-8 Encoding: Shuffled encrypted code points are encoded back to UTF-8
+7. UTF-8 Encoding: Shuffled encrypted code points are encoded back to UTF-8
 
 This process ensures that:
 
 - Each code point remains within its original byte-length class
+- Control characters (newlines, tabs, etc.) are preserved for structural integrity
 - Total byte length is preserved
 - The sequence of character classes is permuted to hide structural patterns
 
@@ -109,6 +115,7 @@ This library is ideal for encrypting UTF-8 text in length-constrained environmen
 ### Limitations
 
 - Not IND-CPA Secure: Not probabilistic; not suitable for high-security applications requiring IND-CPA security
+- Control Characters Unencrypted: ASCII control characters (codes 0-31 like newlines, tabs, etc.) pass through unencrypted
 - Frequency Preservation: Character frequency within each class is preserved (susceptible to frequency analysis within each class)
 - Structural Obfuscation: While the sequence of character classes is permuted to hide patterns, the multiset of classes remains the same (e.g., input with 2 ASCII + 1 emoji will produce output with 2 ASCII + 1 emoji, but in different positions)
 - No Authentication: Provides confidentiality only; no integrity or authentication guarantees
