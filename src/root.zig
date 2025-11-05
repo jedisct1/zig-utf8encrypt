@@ -405,6 +405,7 @@ pub const Utf8Cipher = struct {
         self: *Self,
         cp: u21,
         tweak: []const u8,
+        is_boundary: bool,
     ) Utf8EncryptError!u21 {
         const class = try Utf8Class.fromCodepoint(cp);
 
@@ -427,7 +428,13 @@ pub const Utf8Cipher = struct {
                 var perm: [DOMAIN_SIZE_CLASS1]u8 = undefined;
                 fisherYatesShuffle(DOMAIN_SIZE_CLASS1, &seed, &perm);
 
-                const encrypted_idx = perm[idx];
+                var encrypted_idx = perm[idx];
+
+                // If boundary position and result is space (index 0), apply LUT again
+                if (is_boundary and encrypted_idx == 0) {
+                    encrypted_idx = perm[0];
+                }
+
                 return indexToCpClass1(encrypted_idx);
             },
             .class2 => {
@@ -453,6 +460,7 @@ pub const Utf8Cipher = struct {
         self: *Self,
         cp: u21,
         tweak: []const u8,
+        is_boundary: bool,
     ) Utf8EncryptError!u21 {
         const class = try Utf8Class.fromCodepoint(cp);
 
@@ -478,7 +486,13 @@ pub const Utf8Cipher = struct {
                 var inv_perm: [DOMAIN_SIZE_CLASS1]u8 = undefined;
                 invertPermutation(DOMAIN_SIZE_CLASS1, &perm, &inv_perm);
 
-                const decrypted_idx = inv_perm[idx];
+                var decrypted_idx = inv_perm[idx];
+
+                // If boundary position and result is space (index 0), apply inverse LUT again
+                if (is_boundary and decrypted_idx == 0) {
+                    decrypted_idx = inv_perm[0];
+                }
+
                 return indexToCpClass1(decrypted_idx);
             },
             .class2 => {
@@ -580,8 +594,11 @@ pub const Utf8Cipher = struct {
 
             const chained_tweak = tweak_buf[0..tweak_pos];
 
+            // Check if this is a boundary position (first or last)
+            const is_boundary = (pos == 0 or pos == plaintext_cps.items.len - 1);
+
             // Encrypt code point with chained tweak
-            encrypted_cps[pos] = try self.encryptCodepoint(cp, chained_tweak);
+            encrypted_cps[pos] = try self.encryptCodepoint(cp, chained_tweak, is_boundary);
 
             // Encode encrypted codepoint to get ciphertext bytes for chaining
             var temp_encoded: [4]u8 = undefined;
@@ -712,8 +729,11 @@ pub const Utf8Cipher = struct {
 
             const chained_tweak = tweak_buf[0..tweak_pos];
 
+            // Check if this is a boundary position (first or last)
+            const is_boundary = (pos == 0 or pos == encrypted_cps.len - 1);
+
             // Decrypt code point with chained tweak
-            plaintext_cps[pos] = try self.decryptCodepoint(cp, chained_tweak);
+            plaintext_cps[pos] = try self.decryptCodepoint(cp, chained_tweak, is_boundary);
 
             // Encode encrypted codepoint to get ciphertext bytes for chaining
             var temp_encoded: [4]u8 = undefined;
@@ -842,4 +862,69 @@ test "tweak buffer overflow error" {
     // Should return TweakBufferOverflow error
     const result = cipher.encrypt(plaintext, &long_tweak);
     try std.testing.expectError(error.TweakBufferOverflow, result);
+}
+
+test "boundary space avoidance" {
+    const allocator = std.testing.allocator;
+
+    // Test with many different keys and tweaks to ensure boundary positions
+    // never contain spaces in the ciphertext (for class 1 characters)
+    var key_byte: u8 = 0;
+    while (key_byte < 50) : (key_byte += 1) {
+        const key: [16]u8 = @splat(key_byte);
+        var cipher = try Utf8Cipher.init(allocator, &key);
+        defer cipher.deinit();
+
+        const test_cases = [_][]const u8{
+            "Hello World",
+            "Test message",
+            "A",
+            "AB",
+            "ABC",
+            "x",
+            "xy",
+            "xyz",
+        };
+
+        for (test_cases) |plaintext| {
+            const ciphertext = try cipher.encrypt(plaintext, "test-tweak");
+            defer allocator.free(ciphertext);
+
+            // Check that ciphertext is valid UTF-8
+            try std.testing.expect(std.unicode.utf8ValidateSlice(ciphertext));
+
+            // Check first and last characters
+            var view = std.unicode.Utf8View.initUnchecked(ciphertext);
+            var it = view.iterator();
+
+            // Get first codepoint
+            const first_cp = it.nextCodepoint() orelse continue;
+
+            // Check if first character is class 1 (ASCII)
+            const first_class = try Utf8Class.fromCodepoint(first_cp);
+            if (first_class == .class1) {
+                // First character should not be a space (0x20)
+                try std.testing.expect(first_cp != 0x20);
+            }
+
+            // Get last codepoint
+            var last_cp: u21 = first_cp;
+            while (it.nextCodepoint()) |cp| {
+                last_cp = cp;
+            }
+
+            // Check if last character is class 1 (ASCII)
+            const last_class = try Utf8Class.fromCodepoint(last_cp);
+            if (last_class == .class1) {
+                // Last character should not be a space (0x20)
+                try std.testing.expect(last_cp != 0x20);
+            }
+
+            // Verify decryption works correctly
+            const decrypted = try cipher.decrypt(ciphertext, "test-tweak");
+            defer allocator.free(decrypted);
+
+            try std.testing.expectEqualStrings(plaintext, decrypted);
+        }
+    }
 }

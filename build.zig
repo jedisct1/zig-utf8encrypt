@@ -224,6 +224,24 @@ pub fn build(b: *std.Build) void {
     const test_permutation_demo_step = b.step("demo-permutation", "Demo class sequence permutation");
     test_permutation_demo_step.dependOn(&test_permutation_demo_run.step);
 
+    // Add test executable for boundary space avoidance
+    const test_boundary_space = b.addExecutable(.{
+        .name = "test_boundary_space",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tmp/test_boundary_space.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "utf8encrypt", .module = mod },
+                .{ .name = "fast", .module = fast_module },
+            },
+        }),
+    });
+
+    const test_boundary_space_run = b.addRunArtifact(test_boundary_space);
+    const test_boundary_space_step = b.step("test-boundary-space", "Test boundary space avoidance");
+    test_boundary_space_step.dependOn(&test_boundary_space_run.step);
+
     // Just like flags, top level steps are also listed in the `--help` menu.
     //
     // The Zig build system is entirely implemented in userland, which means

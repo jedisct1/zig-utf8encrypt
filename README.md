@@ -10,6 +10,7 @@ A Zig library for UTF-8 length-preserving encryption that encrypts UTF-8 text wh
 - Byte-Length Preservation: Output has identical byte count as input
 - Class Preservation: Each code point stays within its UTF-8 byte-length class (1-4 bytes)
 - Control Character Passthrough: ASCII control characters (codes 0-31) are preserved unchanged for structural integrity
+- Boundary Space Avoidance: First and last ciphertext characters are never spaces (for class 1 printable ASCII)
 - Content-Dependent Permutation: Character class sequence is shuffled based on key and content to hide structural patterns
 
 ## Quick Start
@@ -70,18 +71,23 @@ Class 3 excludes surrogates U+D800 - U+DFFF (invalid in UTF-8)
 4. Format-Preserving Encryption:
    - Class 1 (printable ASCII): Uses Fisher-Yates shuffle with 256-bit seed from TurboSHAKE128
    - Classes 2-4: Uses FAST cipher with cycle walking until result falls within valid domain
-5. Chaining: Position-dependent tweaks incorporate previous ciphertext bytes (CBC-like mode)
+5. Boundary Space Avoidance (Class 1 only):
+   - For first and last positions: if Fisher-Yates LUT produces a space, apply LUT again
+   - This ensures boundary characters in ciphertext are never spaces (for class 1)
+   - Applied before content-dependent permutation
+6. Chaining: Position-dependent tweaks incorporate previous ciphertext bytes (CBC-like mode)
    - Note: Control characters participate in chaining even though they're not encrypted
-6. Content-Dependent Permutation: The order of encrypted code points is shuffled based on:
+7. Content-Dependent Permutation: The order of encrypted code points is shuffled based on:
    - Sorted encrypted code points (for deterministic permutation derivation)
    - Encryption key (for key-dependent permutation)
    - Fisher-Yates shuffle with TurboSHAKE128 as PRNG
-7. UTF-8 Encoding: Shuffled encrypted code points are encoded back to UTF-8
+8. UTF-8 Encoding: Shuffled encrypted code points are encoded back to UTF-8
 
 This process ensures that:
 
 - Each code point remains within its original byte-length class
 - Control characters (newlines, tabs, etc.) are preserved for structural integrity
+- Boundary characters (first/last) are never spaces for class 1 printable ASCII
 - Total byte length is preserved
 - The sequence of character classes is permuted to hide structural patterns
 
