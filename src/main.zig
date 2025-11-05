@@ -12,10 +12,6 @@ pub fn main() !void {
     // Generate a random key
     const key: [16]u8 = @splat(0x2B);
 
-    // Initialize cipher
-    var cipher = try utf8encrypt.Utf8Cipher.init(allocator, &key);
-    defer cipher.deinit();
-
     // Test with various UTF-8 strings
     const test_strings = [_][]const u8{
         "Hello, World!",
@@ -24,18 +20,47 @@ pub fn main() !void {
         "Café résumé naïve",
     };
 
-    for (test_strings) |plaintext| {
-        std.debug.print("Plaintext:  {s} ({d} bytes)\n", .{ plaintext, plaintext.len });
+    // Test with boundary space avoidance enabled
+    std.debug.print("=== With Boundary Space Avoidance ===\n\n", .{});
+    {
+        var cipher = try utf8encrypt.Utf8Cipher.init(allocator, &key, true);
+        defer cipher.deinit();
 
-        const ciphertext = try cipher.encrypt(plaintext, "demo");
-        defer allocator.free(ciphertext);
+        for (test_strings) |plaintext| {
+            std.debug.print("Plaintext:  {s} ({d} bytes)\n", .{ plaintext, plaintext.len });
 
-        std.debug.print("Ciphertext: {s} ({d} bytes)\n", .{ ciphertext, ciphertext.len });
+            const ciphertext = try cipher.encrypt(plaintext, "demo");
+            defer allocator.free(ciphertext);
 
-        const decrypted = try cipher.decrypt(ciphertext, "demo");
-        defer allocator.free(decrypted);
+            std.debug.print("Ciphertext: {s} ({d} bytes)\n", .{ ciphertext, ciphertext.len });
 
-        const match = std.mem.eql(u8, plaintext, decrypted);
-        std.debug.print("Decrypted:  {s} (match: {s})\n\n", .{ decrypted, if (match) "✓" else "✗" });
+            const decrypted = try cipher.decrypt(ciphertext, "demo");
+            defer allocator.free(decrypted);
+
+            const match = std.mem.eql(u8, plaintext, decrypted);
+            std.debug.print("Decrypted:  {s} (match: {s})\n\n", .{ decrypted, if (match) "✓" else "✗" });
+        }
+    }
+
+    // Test without boundary space avoidance
+    std.debug.print("\n=== Without Boundary Space Avoidance ===\n\n", .{});
+    {
+        var cipher = try utf8encrypt.Utf8Cipher.init(allocator, &key, false);
+        defer cipher.deinit();
+
+        for (test_strings) |plaintext| {
+            std.debug.print("Plaintext:  {s} ({d} bytes)\n", .{ plaintext, plaintext.len });
+
+            const ciphertext = try cipher.encrypt(plaintext, "demo");
+            defer allocator.free(ciphertext);
+
+            std.debug.print("Ciphertext: {s} ({d} bytes)\n", .{ ciphertext, ciphertext.len });
+
+            const decrypted = try cipher.decrypt(ciphertext, "demo");
+            defer allocator.free(decrypted);
+
+            const match = std.mem.eql(u8, plaintext, decrypted);
+            std.debug.print("Decrypted:  {s} (match: {s})\n\n", .{ decrypted, if (match) "✓" else "✗" });
+        }
     }
 }

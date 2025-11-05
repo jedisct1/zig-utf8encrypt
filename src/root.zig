@@ -348,8 +348,12 @@ pub const Utf8Cipher = struct {
 
     allocator: Allocator,
 
+    /// If true, ensures boundary positions (first/last) are never spaces for class 1
+    avoid_boundary_spaces: bool,
+
     /// Initialize UTF-8 cipher with a 16-byte master key
-    pub fn init(allocator: Allocator, key: *const [16]u8) !Self {
+    /// If avoid_boundary_spaces is true, first and last characters will never be spaces (for class 1)
+    pub fn init(allocator: Allocator, key: *const [16]u8, avoid_boundary_spaces: bool) !Self {
         // Initialize FAST contexts for each class
         const ctx1 = try initFastContext(allocator, WORD_LEN_CLASS1, key);
         errdefer {
@@ -382,6 +386,7 @@ pub const Utf8Cipher = struct {
             .ctx4 = ctx4,
             .key = key.*,
             .allocator = allocator,
+            .avoid_boundary_spaces = avoid_boundary_spaces,
         };
     }
 
@@ -430,8 +435,9 @@ pub const Utf8Cipher = struct {
 
                 var encrypted_idx = perm[idx];
 
-                // If boundary position and result is space (index 0), apply LUT again
-                if (is_boundary and encrypted_idx == 0) {
+                // If boundary space avoidance is enabled and this is a boundary position
+                // and result is space (index 0), apply LUT again
+                if (self.avoid_boundary_spaces and is_boundary and encrypted_idx == 0) {
                     encrypted_idx = perm[0];
                 }
 
@@ -488,8 +494,9 @@ pub const Utf8Cipher = struct {
 
                 var decrypted_idx = inv_perm[idx];
 
-                // If boundary position and result is space (index 0), apply inverse LUT again
-                if (is_boundary and decrypted_idx == 0) {
+                // If boundary space avoidance is enabled and this is a boundary position
+                // and result is space (index 0), apply inverse LUT again
+                if (self.avoid_boundary_spaces and is_boundary and decrypted_idx == 0) {
                     decrypted_idx = inv_perm[0];
                 }
 
@@ -798,7 +805,7 @@ test "encryption roundtrip ASCII" {
     const allocator = std.testing.allocator;
 
     const key: [16]u8 = @splat(0x2B);
-    var cipher = try Utf8Cipher.init(allocator, &key);
+    var cipher = try Utf8Cipher.init(allocator, &key, false);
     defer cipher.deinit();
 
     const plaintext = "Hello, World!";
@@ -824,7 +831,7 @@ test "encryption roundtrip multi-byte UTF-8" {
     const allocator = std.testing.allocator;
 
     const key: [16]u8 = @splat(0x2B);
-    var cipher = try Utf8Cipher.init(allocator, &key);
+    var cipher = try Utf8Cipher.init(allocator, &key, false);
     defer cipher.deinit();
 
     const plaintext = "Héllo 世界 🌍";
@@ -850,7 +857,7 @@ test "tweak buffer overflow error" {
     const allocator = std.testing.allocator;
 
     const key: [16]u8 = @splat(0x2B);
-    var cipher = try Utf8Cipher.init(allocator, &key);
+    var cipher = try Utf8Cipher.init(allocator, &key, false);
     defer cipher.deinit();
 
     const plaintext = "Hello";
@@ -864,7 +871,7 @@ test "tweak buffer overflow error" {
     try std.testing.expectError(error.TweakBufferOverflow, result);
 }
 
-test "boundary space avoidance" {
+test "boundary space avoidance enabled" {
     const allocator = std.testing.allocator;
 
     // Test with many different keys and tweaks to ensure boundary positions
@@ -872,7 +879,7 @@ test "boundary space avoidance" {
     var key_byte: u8 = 0;
     while (key_byte < 50) : (key_byte += 1) {
         const key: [16]u8 = @splat(key_byte);
-        var cipher = try Utf8Cipher.init(allocator, &key);
+        var cipher = try Utf8Cipher.init(allocator, &key, true);
         defer cipher.deinit();
 
         const test_cases = [_][]const u8{
@@ -926,5 +933,37 @@ test "boundary space avoidance" {
 
             try std.testing.expectEqualStrings(plaintext, decrypted);
         }
+    }
+}
+
+test "boundary space avoidance disabled" {
+    const allocator = std.testing.allocator;
+
+    // When boundary space avoidance is disabled, spaces CAN appear at boundaries
+    // We just verify that encryption/decryption works correctly
+    const key: [16]u8 = @splat(0x42);
+    var cipher = try Utf8Cipher.init(allocator, &key, false);
+    defer cipher.deinit();
+
+    const test_cases = [_][]const u8{
+        "Hello World",
+        "Test message",
+        "A",
+        "AB",
+        "ABC",
+    };
+
+    for (test_cases) |plaintext| {
+        const ciphertext = try cipher.encrypt(plaintext, "test-tweak");
+        defer allocator.free(ciphertext);
+
+        // Check that ciphertext is valid UTF-8
+        try std.testing.expect(std.unicode.utf8ValidateSlice(ciphertext));
+
+        // Verify decryption works correctly
+        const decrypted = try cipher.decrypt(ciphertext, "test-tweak");
+        defer allocator.free(decrypted);
+
+        try std.testing.expectEqualStrings(plaintext, decrypted);
     }
 }

@@ -10,7 +10,7 @@ A Zig library for UTF-8 length-preserving encryption that encrypts UTF-8 text wh
 - Byte-Length Preservation: Output has identical byte count as input
 - Class Preservation: Each code point stays within its UTF-8 byte-length class (1-4 bytes)
 - Control Character Passthrough: ASCII control characters (codes 0-31) are preserved unchanged for structural integrity
-- Boundary Space Avoidance: First and last ciphertext characters are never spaces (for class 1 printable ASCII)
+- Optional Boundary Space Avoidance: Configurable option to ensure first and last ciphertext characters are never spaces (for class 1 printable ASCII)
 - Content-Dependent Permutation: Character class sequence is shuffled based on key and content to hide structural patterns
 
 ## Quick Start
@@ -24,9 +24,10 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    // Initialize cipher with 16-byte key
+    // Initialize cipher with 16-byte key and boundary space avoidance option
     const key = [_]u8{0x2B}  16;
-    var cipher = try utf8encrypt.Utf8Cipher.init(allocator, &key);
+    const avoid_boundary_spaces = false; // Set to true to prevent spaces at boundaries
+    var cipher = try utf8encrypt.Utf8Cipher.init(allocator, &key, avoid_boundary_spaces);
     defer cipher.deinit();
 
     // Encrypt UTF-8 text
@@ -71,10 +72,12 @@ Class 3 excludes surrogates U+D800 - U+DFFF (invalid in UTF-8)
 4. Format-Preserving Encryption:
    - Class 1 (printable ASCII): Uses Fisher-Yates shuffle with 256-bit seed from TurboSHAKE128
    - Classes 2-4: Uses FAST cipher with cycle walking until result falls within valid domain
-5. Boundary Space Avoidance (Class 1 only):
-   - For first and last positions: if Fisher-Yates LUT produces a space, apply LUT again
+5. Boundary Space Avoidance (Class 1 only, optional):
+   - Can be enabled via `avoid_boundary_spaces` parameter in initialization
+   - When enabled: For first and last positions, if Fisher-Yates LUT produces a space, apply LUT again
    - This ensures boundary characters in ciphertext are never spaces (for class 1)
    - Applied before content-dependent permutation
+   - Disabled by default for maximum flexibility
 6. Chaining: Position-dependent tweaks incorporate previous ciphertext bytes (CBC-like mode)
    - Note: Control characters participate in chaining even though they're not encrypted
 7. Content-Dependent Permutation: The order of encrypted code points is shuffled based on:
@@ -87,7 +90,7 @@ This process ensures that:
 
 - Each code point remains within its original byte-length class
 - Control characters (newlines, tabs, etc.) are preserved for structural integrity
-- Boundary characters (first/last) are never spaces for class 1 printable ASCII
+- Boundary characters (first/last) can optionally be prevented from becoming spaces (for class 1 printable ASCII)
 - Total byte length is preserved
 - The sequence of character classes is permuted to hide structural patterns
 
@@ -184,7 +187,8 @@ Note: The encrypted output shown above is deterministic for a given key and twea
 ### Basic Encryption/Decryption
 
 ```zig
-const cipher = try Utf8Cipher.init(allocator, &key);
+// Initialize with boundary space avoidance disabled (default)
+const cipher = try Utf8Cipher.init(allocator, &key, false);
 defer cipher.deinit();
 
 const ciphertext = try cipher.encrypt("Hello, World!", "myapp:user123:field:message");
@@ -194,9 +198,24 @@ const plaintext = try cipher.decrypt(ciphertext, "myapp:user123:field:message");
 defer allocator.free(plaintext);
 ```
 
+### With Boundary Space Avoidance
+
+```zig
+// Initialize with boundary space avoidance enabled
+const cipher = try Utf8Cipher.init(allocator, &key, true);
+defer cipher.deinit();
+
+// First and last characters will never be spaces (for class 1 printable ASCII)
+const ciphertext = try cipher.encrypt("Hello, World!", "myapp:user123:field:message");
+defer allocator.free(ciphertext);
+```
+
 ### Unique Tweaks for Different Contexts
 
 ```zig
+const cipher = try Utf8Cipher.init(allocator, &key, false);
+defer cipher.deinit();
+
 // Different tweaks for different contexts prevent cross-context attacks
 const email_encrypted = try cipher.encrypt(user_email, "app:users:email");
 defer allocator.free(email_encrypted);
@@ -208,6 +227,9 @@ defer allocator.free(phone_encrypted);
 ### Multi-Byte UTF-8
 
 ```zig
+const cipher = try Utf8Cipher.init(allocator, &key, false);
+defer cipher.deinit();
+
 const multilingual = "Hello 世界 مرحبا";
 const encrypted = try cipher.encrypt(multilingual, "demo");
 defer allocator.free(encrypted);
@@ -222,6 +244,9 @@ std.debug.assert(std.unicode.utf8ValidateSlice(encrypted));
 ### Class Sequence Permutation Demo
 
 ```zig
+const cipher = try Utf8Cipher.init(allocator, &key, false);
+defer cipher.deinit();
+
 // Example showing how class sequences are permuted
 const plaintext = "AB世";  // Classes: [ASCII, ASCII, 3-byte]
 const ciphertext = try cipher.encrypt(plaintext, "test");
