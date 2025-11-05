@@ -188,6 +188,42 @@ pub fn build(b: *std.Build) void {
     const debug_class1_step = b.step("debug-class1", "Debug class1 convergence");
     debug_class1_step.dependOn(&debug_class1_run.step);
 
+    // Add test executable for permutation demonstration
+    const test_permutation = b.addExecutable(.{
+        .name = "test_permutation",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tmp/test_permutation.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "utf8encrypt", .module = mod },
+                .{ .name = "fast", .module = fast_module },
+            },
+        }),
+    });
+
+    const test_permutation_run = b.addRunArtifact(test_permutation);
+    const test_permutation_step = b.step("test-permutation", "Test class sequence permutation");
+    test_permutation_step.dependOn(&test_permutation_run.step);
+
+    // Add demo executable for permutation demonstration
+    const test_permutation_demo = b.addExecutable(.{
+        .name = "test_permutation_demo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tmp/test_permutation_demo.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "utf8encrypt", .module = mod },
+                .{ .name = "fast", .module = fast_module },
+            },
+        }),
+    });
+
+    const test_permutation_demo_run = b.addRunArtifact(test_permutation_demo);
+    const test_permutation_demo_step = b.step("demo-permutation", "Demo class sequence permutation");
+    test_permutation_demo_step.dependOn(&test_permutation_demo_run.step);
+
     // Just like flags, top level steps are also listed in the `--help` menu.
     //
     // The Zig build system is entirely implemented in userland, which means

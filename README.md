@@ -8,6 +8,8 @@ A Zig library for UTF-8 length-preserving encryption that encrypts UTF-8 text wh
 
 - Valid UTF-8 Output: Encrypted text is guaranteed to be valid UTF-8
 - Byte-Length Preservation: Output has identical byte count as input
+- Class Preservation: Each code point stays within its UTF-8 byte-length class (1-4 bytes)
+- Content-Dependent Permutation: Character class sequence is shuffled based on key and content to hide structural patterns
 
 ## Quick Start
 
@@ -65,7 +67,17 @@ The library divides Unicode code points into 4 classes based on UTF-8 byte lengt
    - Class 1 (ASCII): Uses Fisher-Yates shuffle with 256-bit seed from TurboSHAKE128
    - Classes 2-4: Uses FAST cipher with cycle walking until result falls within valid domain
 4. Chaining: Position-dependent tweaks incorporate previous ciphertext bytes (CBC-like mode)
-5. UTF-8 Encoding: Encrypted code points are encoded back to UTF-8
+5. Content-Dependent Permutation: The order of encrypted code points is shuffled based on:
+   - Sorted encrypted code points (for deterministic permutation derivation)
+   - Encryption key (for key-dependent permutation)
+   - Fisher-Yates shuffle with TurboSHAKE128 as PRNG
+6. UTF-8 Encoding: Shuffled encrypted code points are encoded back to UTF-8
+
+This process ensures that:
+
+- Each code point remains within its original byte-length class
+- Total byte length is preserved
+- The sequence of character classes is permuted to hide structural patterns
 
 ### Chaining Mode
 
@@ -97,7 +109,8 @@ This library is ideal for encrypting UTF-8 text in length-constrained environmen
 ### Limitations
 
 - Not IND-CPA Secure: Not probabilistic; not suitable for high-security applications requiring IND-CPA security
-- Frequency Preservation: Character frequency within each class is preserved (susceptible to frequency analysis)
+- Frequency Preservation: Character frequency within each class is preserved (susceptible to frequency analysis within each class)
+- Structural Obfuscation: While the sequence of character classes is permuted to hide patterns, the multiset of classes remains the same (e.g., input with 2 ASCII + 1 emoji will produce output with 2 ASCII + 1 emoji, but in different positions)
 - No Authentication: Provides confidentiality only; no integrity or authentication guarantees
 
 ## Performance
@@ -131,7 +144,7 @@ Plaintext:  Héllo 世界 (13 bytes)
 Ciphertext: LȦ.O@䧵 (13 bytes)
 ```
 
-Characters from different UTF-8 classes are encrypted while preserving their byte-length classes. The Chinese characters (3 bytes each) remain 3-byte UTF-8 characters in the output.
+Characters from different UTF-8 classes are encrypted while preserving their byte-length classes. The Chinese characters (3 bytes each) remain 3-byte UTF-8 characters in the output. Note that the order of character classes may be permuted in the encrypted output.
 
 ### Emoji (4-Byte UTF-8)
 
@@ -140,7 +153,7 @@ Plaintext:  🌍 emoji test 🚀 (20 bytes)
 Ciphertext: 񃻸RhufBh]E񄃂 (20 bytes)
 ```
 
-Emojis are 4-byte UTF-8 sequences that encrypt to other 4-byte UTF-8 sequences, maintaining the byte structure.
+Emojis are 4-byte UTF-8 sequences that encrypt to other 4-byte UTF-8 sequences, maintaining the byte structure. The permutation may reorder ASCII and emoji characters while preserving the total byte count.
 
 ### Accented Characters
 
@@ -149,9 +162,9 @@ Plaintext:  Café résumé naïve (21 bytes)
 Ciphertext: ~Ԟtݛ]0و>tM¸+ (21 bytes)
 ```
 
-Latin characters with diacritics (é, ï) are 2-byte UTF-8 sequences that encrypt to other 2-byte sequences.
+Latin characters with diacritics (é, ï) are 2-byte UTF-8 sequences that encrypt to other 2-byte sequences. Each character stays within its byte-length class, but the class sequence may be reordered.
 
-**Note:** The encrypted output shown above is deterministic for a given key and tweak. Different keys, tweaks, or positions will produce different ciphertexts.
+Note: The encrypted output shown above is deterministic for a given key and tweak. Different keys, tweaks, or positions will produce different ciphertexts.
 
 ## Examples
 
@@ -191,4 +204,19 @@ std.debug.assert(encrypted.len == multilingual.len);
 
 // Valid UTF-8 preserved
 std.debug.assert(std.unicode.utf8ValidateSlice(encrypted));
+```
+
+### Class Sequence Permutation Demo
+
+```zig
+// Example showing how class sequences are permuted
+const plaintext = "AB世";  // Classes: [ASCII, ASCII, 3-byte]
+const ciphertext = try cipher.encrypt(plaintext, "test");
+defer allocator.free(ciphertext);
+
+// Ciphertext has SAME multiset of classes but DIFFERENT order
+// For example, might produce: [3-byte, ASCII, ASCII]
+// Total byte length: 5 bytes (unchanged)
+// Each character stayed in its class (ASCII→ASCII, 3-byte→3-byte)
+// But the ORDER was permuted based on content and key
 ```

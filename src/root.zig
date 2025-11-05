@@ -1,24 +1,26 @@
-//! UTF-8 Length-Preserving Encryption
+//! UTF-8 Format-Preserving Encryption with Class Permutation
 //!
 //! This library provides format-preserving encryption for UTF-8 text, ensuring that:
 //! - Output is valid UTF-8
-//! - Byte length is exactly preserved
-//! - Each code point stays within its UTF-8 byte-length class
+//! - Byte length is exactly preserved (input_len == output_len)
+//! - Each code point stays within its UTF-8 byte-length class (1-4 bytes)
+//! - Character class sequence is permuted based on key and content
 //!
 //! Uses the FAST cipher with radix-256 encoding for format-preserving encryption
-//! of code points within each of the 4 UTF-8 byte-length classes.
+//! with content-dependent class permutations to hide structural information.
 //!
 //! ## Use Cases
 //!
 //! This library is ideal for encrypting UTF-8 text in length-constrained environments:
 //!
-//! - **Social network posts**: Encrypt posts/messages while respecting character/byte limits
-//!   imposed by platforms (e.g., Twitter, Mastodon, etc.)
-//! - **Filesystem files**: Encrypt filenames or file contents where the filesystem requires
-//!   valid UTF-8 and has maximum byte length restrictions
-//! - **Database fields**: Encrypt VARCHAR/TEXT fields without changing column size requirements
-//! - **Protocol messages**: Encrypt fixed-length UTF-8 fields in network protocols
-//! - **Legacy systems**: Encrypt data for systems that validate UTF-8 and enforce byte limits
+//! - **Social Network Posts**: Encrypt messages while respecting character/byte limits
+//! - **Database Fields**: Encrypt VARCHAR/TEXT fields without changing column size requirements
+//! - **Filesystem**: Encrypt filenames that must be valid UTF-8 with byte length restrictions
+//! - **Protocol Messages**: Encrypt fixed-length UTF-8 fields in network protocols
+//! - **Legacy Systems**: Encrypt data for systems that validate UTF-8 and enforce byte limits
+//! - **Confidential text**: Encrypt text while hiding language/encoding patterns
+//! - **Obfuscated messages**: Hide whether text contains ASCII, Unicode, emojis, etc.
+//! - **Research/experimentation**: Explore format-preserving encryption techniques
 
 const std = @import("std");
 const fast = @import("fast");
@@ -120,6 +122,73 @@ fn invertPermutation(comptime N: usize, perm: *const [N]u8, inv: *[N]u8) void {
         const val = perm[i];
         inv[val] = @intCast(i);
     }
+}
+
+/// Derive a seed from key and sorted codepoints
+/// Sorts the codepoints, serializes them, and hashes with key using TurboSHAKE128
+fn deriveSeedFromCodepoints(key: *const [16]u8, codepoints: []const u21, allocator: Allocator) ![SEED_SIZE]u8 {
+    // Create a copy and sort it
+    const sorted = try allocator.dupe(u21, codepoints);
+    defer allocator.free(sorted);
+    std.mem.sort(u21, sorted, {}, std.sort.asc(u21));
+
+    // Serialize codepoints as 4-byte little-endian integers
+    const cp_bytes = try allocator.alloc(u8, sorted.len * 4);
+    defer allocator.free(cp_bytes);
+    for (sorted, 0..) |cp, i| {
+        std.mem.writeInt(u32, cp_bytes[i * 4 ..][0..4], @as(u32, cp), .little);
+    }
+
+    // Hash key + sorted codepoints with TurboSHAKE128
+    var seed: [SEED_SIZE]u8 = undefined;
+    const TurboShake = std.crypto.hash.sha3.TurboShake128(null);
+    var shake = TurboShake.init(.{});
+    shake.update(key);
+    shake.update(cp_bytes);
+    shake.squeeze(&seed);
+
+    return seed;
+}
+
+/// Generate a permutation using Fisher-Yates with TurboSHAKE128 as PRNG
+fn generatePermutationFromSeed(seed: *const [SEED_SIZE]u8, n: usize, allocator: Allocator) ![]usize {
+    const perm = try allocator.alloc(usize, n);
+    errdefer allocator.free(perm);
+
+    // Initialize to identity permutation
+    for (0..n) |i| {
+        perm[i] = i;
+    }
+
+    // Fisher-Yates shuffle using TurboSHAKE128 as PRNG
+    const TurboShake = std.crypto.hash.sha3.TurboShake128(null);
+    var shake = TurboShake.init(.{});
+    shake.update(seed);
+
+    for (0..n) |i| {
+        // Generate random j in [i, n-1]
+        var rand_bytes: [8]u8 = undefined;
+        shake.squeeze(&rand_bytes);
+        const rand_val = std.mem.readInt(u64, &rand_bytes, .little);
+        const j = i + (rand_val % (n - i));
+
+        // Swap perm[i] and perm[j]
+        std.mem.swap(usize, &perm[i], &perm[j]);
+    }
+
+    return perm;
+}
+
+/// Invert a dynamically-sized permutation
+fn invertPermutationDynamic(perm: []const usize, allocator: Allocator) ![]usize {
+    const inv = try allocator.alloc(usize, perm.len);
+    errdefer allocator.free(inv);
+
+    for (perm, 0..) |p, i| {
+        inv[p] = i;
+    }
+
+    return inv;
 }
 
 /// Helper to initialize a FAST context with given word length
@@ -267,6 +336,8 @@ pub const Utf8Cipher = struct {
     ctx3: *CtxType, // word_length=2
     ctx4: *CtxType, // word_length=3
 
+    key: [16]u8, // Store key for seed derivation
+
     allocator: Allocator,
 
     /// Initialize UTF-8 cipher with a 16-byte master key
@@ -301,6 +372,7 @@ pub const Utf8Cipher = struct {
             .ctx2 = ctx2,
             .ctx3 = ctx3,
             .ctx4 = ctx4,
+            .key = key.*,
             .allocator = allocator,
         };
     }
@@ -403,8 +475,9 @@ pub const Utf8Cipher = struct {
         }
     }
 
-    /// Encrypt UTF-8 text with chaining mode (similar to CBC)
+    /// Encrypt UTF-8 text with chaining mode and content-dependent permutation
     /// Each codepoint's tweak incorporates the previous ciphertext bytes
+    /// The order of codepoints is then shuffled based on sorted encrypted values
     /// Returns allocated ciphertext with same byte length as plaintext
     pub fn encrypt(
         self: *Self,
@@ -416,26 +489,37 @@ pub const Utf8Cipher = struct {
             return error.InvalidUtf8;
         }
 
-        // Allocate output buffer (same size as input)
-        const output = try self.allocator.alloc(u8, plaintext.len);
-        errdefer self.allocator.free(output);
+        // Step 1: Decode all plaintext codepoints
+        var plaintext_cps = std.ArrayList(u21){};
+        defer plaintext_cps.deinit(self.allocator);
+
+        var view = std.unicode.Utf8View.initUnchecked(plaintext);
+        var it = view.iterator();
+        while (it.nextCodepoint()) |cp| {
+            try plaintext_cps.append(self.allocator, cp);
+        }
+
+        // Handle empty input
+        if (plaintext_cps.items.len == 0) {
+            return try self.allocator.alloc(u8, 0);
+        }
+
+        // Step 2: Encrypt each codepoint with chaining
+        const encrypted_cps = try self.allocator.alloc(u21, plaintext_cps.items.len);
+        defer self.allocator.free(encrypted_cps);
 
         // Generate IV from base tweak using TurboSHAKE128
         var iv: [IV_SIZE]u8 = undefined;
         const TurboShake = std.crypto.hash.sha3.TurboShake128(null);
         TurboShake.hash(tweak, &iv, .{});
 
-        var view = std.unicode.Utf8View.initUnchecked(plaintext);
-        var it = view.iterator();
-        var pos: usize = 0;
-        var output_pos: usize = 0;
         var prev_ciphertext_bytes: [PREV_CIPHERTEXT_BUFFER_SIZE]u8 = undefined;
         var prev_len: usize = iv.len;
 
         // Use IV as "previous" for first codepoint
         @memcpy(prev_ciphertext_bytes[0..iv.len], &iv);
 
-        while (it.nextCodepoint()) |cp| {
+        for (plaintext_cps.items, 0..) |cp, pos| {
             // Create chained tweak: base_tweak:pos:N:chain:<binary_prev_bytes>
             var tweak_buf: [TWEAK_BUFFER_SIZE]u8 = undefined;
             var tweak_pos: usize = 0;
@@ -470,25 +554,43 @@ pub const Utf8Cipher = struct {
             const chained_tweak = tweak_buf[0..tweak_pos];
 
             // Encrypt code point with chained tweak
-            const encrypted_cp = try self.encryptCodepoint(cp, chained_tweak);
+            encrypted_cps[pos] = try self.encryptCodepoint(cp, chained_tweak);
 
-            // Encode to UTF-8
-            const len = try std.unicode.utf8Encode(encrypted_cp, output[output_pos..]);
-
-            // Save this ciphertext for next iteration's chain
-            @memcpy(prev_ciphertext_bytes[0..len], output[output_pos..][0..len]);
+            // Encode encrypted codepoint to get ciphertext bytes for chaining
+            var temp_encoded: [4]u8 = undefined;
+            const len = try std.unicode.utf8Encode(encrypted_cps[pos], &temp_encoded);
+            @memcpy(prev_ciphertext_bytes[0..len], temp_encoded[0..len]);
             prev_len = len;
+        }
 
+        // Step 3: Derive permutation from sorted encrypted codepoints
+        const seed = try deriveSeedFromCodepoints(&self.key, encrypted_cps, self.allocator);
+        const perm = try generatePermutationFromSeed(&seed, encrypted_cps.len, self.allocator);
+        defer self.allocator.free(perm);
+
+        // Step 4: Apply permutation to shuffle encrypted codepoints
+        const shuffled_cps = try self.allocator.alloc(u21, encrypted_cps.len);
+        defer self.allocator.free(shuffled_cps);
+        for (0..encrypted_cps.len) |i| {
+            shuffled_cps[i] = encrypted_cps[perm[i]];
+        }
+
+        // Step 5: Encode shuffled codepoints to UTF-8
+        const output = try self.allocator.alloc(u8, plaintext.len);
+        errdefer self.allocator.free(output);
+
+        var output_pos: usize = 0;
+        for (shuffled_cps) |cp| {
+            const len = try std.unicode.utf8Encode(cp, output[output_pos..]);
             output_pos += len;
-            pos += 1;
         }
 
         std.debug.assert(output_pos == plaintext.len);
         return output;
     }
 
-    /// Decrypt UTF-8 ciphertext with chaining mode (similar to CBC)
-    /// Each codepoint's tweak incorporates the previous ciphertext bytes
+    /// Decrypt UTF-8 ciphertext with chaining mode and content-dependent permutation
+    /// First unshuffles based on sorted ciphertext, then decrypts with chaining
     /// Returns allocated plaintext with same byte length as ciphertext
     pub fn decrypt(
         self: *Self,
@@ -500,33 +602,54 @@ pub const Utf8Cipher = struct {
             return error.InvalidUtf8;
         }
 
-        // Allocate output buffer (same size as input)
-        const output = try self.allocator.alloc(u8, ciphertext.len);
-        errdefer self.allocator.free(output);
+        // Step 1: Decode all shuffled ciphertext codepoints
+        var shuffled_cps = std.ArrayList(u21){};
+        defer shuffled_cps.deinit(self.allocator);
+
+        var view = std.unicode.Utf8View.initUnchecked(ciphertext);
+        var it = view.iterator();
+        while (it.nextCodepoint()) |cp| {
+            try shuffled_cps.append(self.allocator, cp);
+        }
+
+        // Handle empty input
+        if (shuffled_cps.items.len == 0) {
+            return try self.allocator.alloc(u8, 0);
+        }
+
+        // Step 2: Derive same permutation from sorted codepoints
+        const seed = try deriveSeedFromCodepoints(&self.key, shuffled_cps.items, self.allocator);
+        const perm = try generatePermutationFromSeed(&seed, shuffled_cps.items.len, self.allocator);
+        defer self.allocator.free(perm);
+
+        // Step 3: Invert permutation
+        const inv_perm = try invertPermutationDynamic(perm, self.allocator);
+        defer self.allocator.free(inv_perm);
+
+        // Step 4: Unshuffle to restore original encrypted order
+        const encrypted_cps = try self.allocator.alloc(u21, shuffled_cps.items.len);
+        defer self.allocator.free(encrypted_cps);
+        for (0..shuffled_cps.items.len) |i| {
+            encrypted_cps[i] = shuffled_cps.items[inv_perm[i]];
+        }
+
+        // Step 5: Decrypt with chaining (must use original encrypted order)
+        const plaintext_cps = try self.allocator.alloc(u21, encrypted_cps.len);
+        defer self.allocator.free(plaintext_cps);
 
         // Generate same IV from base tweak using TurboSHAKE128
         var iv: [IV_SIZE]u8 = undefined;
         const TurboShake = std.crypto.hash.sha3.TurboShake128(null);
         TurboShake.hash(tweak, &iv, .{});
 
-        var view = std.unicode.Utf8View.initUnchecked(ciphertext);
-        var it = view.iterator();
-        var pos: usize = 0;
-        var input_pos: usize = 0;
-        var output_pos: usize = 0;
         var prev_ciphertext_bytes: [PREV_CIPHERTEXT_BUFFER_SIZE]u8 = undefined;
         var prev_len: usize = iv.len;
 
         // Use IV as "previous" for first codepoint
         @memcpy(prev_ciphertext_bytes[0..iv.len], &iv);
 
-        while (it.nextCodepoint()) |cp| {
-            // Get the byte length of current ciphertext codepoint
-            const cp_len = std.unicode.utf8CodepointSequenceLength(cp) catch {
-                return error.InvalidUtf8;
-            };
-
-            // Create same chained tweak as encryption (binary concatenation)
+        for (encrypted_cps, 0..) |cp, pos| {
+            // Create same chained tweak as encryption
             var tweak_buf: [TWEAK_BUFFER_SIZE]u8 = undefined;
             var tweak_pos: usize = 0;
 
@@ -560,17 +683,23 @@ pub const Utf8Cipher = struct {
             const chained_tweak = tweak_buf[0..tweak_pos];
 
             // Decrypt code point with chained tweak
-            const decrypted_cp = try self.decryptCodepoint(cp, chained_tweak);
+            plaintext_cps[pos] = try self.decryptCodepoint(cp, chained_tweak);
 
-            // Save current ciphertext bytes for next iteration's chain (before we overwrite output)
-            @memcpy(prev_ciphertext_bytes[0..cp_len], ciphertext[input_pos..][0..cp_len]);
-            prev_len = cp_len;
+            // Encode encrypted codepoint to get ciphertext bytes for chaining
+            var temp_encoded: [4]u8 = undefined;
+            const len = try std.unicode.utf8Encode(cp, &temp_encoded);
+            @memcpy(prev_ciphertext_bytes[0..len], temp_encoded[0..len]);
+            prev_len = len;
+        }
 
-            // Encode decrypted codepoint to UTF-8
-            const len = try std.unicode.utf8Encode(decrypted_cp, output[output_pos..]);
+        // Step 6: Encode plaintext codepoints to UTF-8
+        const output = try self.allocator.alloc(u8, ciphertext.len);
+        errdefer self.allocator.free(output);
+
+        var output_pos: usize = 0;
+        for (plaintext_cps) |cp| {
+            const len = try std.unicode.utf8Encode(cp, output[output_pos..]);
             output_pos += len;
-            input_pos += cp_len;
-            pos += 1;
         }
 
         std.debug.assert(output_pos == ciphertext.len);
