@@ -25,7 +25,7 @@ pub fn main() !void {
     const allocator = gpa.allocator();
 
     // Initialize cipher with 16-byte key and boundary space avoidance option
-    const key = [_]u8{0x2B}  16;
+    const key: [16]u8 = @splat(0x2B);
     const avoid_boundary_spaces = false; // Set to true to prevent spaces at boundaries
     var cipher = try utf8encrypt.Utf8Cipher.init(allocator, &key, avoid_boundary_spaces);
     defer cipher.deinit();
