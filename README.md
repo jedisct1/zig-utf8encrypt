@@ -53,7 +53,7 @@ The library divides Unicode code points into 4 classes based on UTF-8 byte lengt
 
 | Class | Code Point Range   | UTF-8 Bytes | Domain Size | Encryption Method                          |
 | ----- | ------------------ | ----------- | ----------- | ------------------------------------------ |
-| 1     | U+0000 - U+007F    | 1 byte      | 96*         | Fisher-Yates permutation (tweak-dependent) |
+| 1     | U+0000 - U+007F    | 1 byte      | 96          | Fisher-Yates permutation (tweak-dependent) |
 | 2     | U+0080 - U+07FF    | 2 bytes     | 1,920       | FAST cipher + cycle walking                |
 | 3     | U+0800 - U+FFFF    | 3 bytes     | 61,440      | FAST cipher + cycle walking                |
 | 4     | U+10000 - U+10FFFF | 4 bytes     | 1,048,576   | FAST cipher + cycle walking                |
