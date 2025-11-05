@@ -97,6 +97,12 @@ pub const TWEAK_BUFFER_SIZE: usize = 1024; // Maximum tweak string buffer size
 pub const PREV_CIPHERTEXT_BUFFER_SIZE: usize = 16; // Buffer for previous ciphertext bytes (IV size)
 pub const SEED_SIZE: usize = 32; // Seed size for Fisher-Yates shuffle (256 bits)
 
+/// Context-separation prefixes for TurboSHAKE128 (all 8 bytes for domain separation)
+pub const SHAKE_PREFIX_IV: []const u8 = "utf8e-iv"; // IV generation from tweak
+pub const SHAKE_PREFIX_SEED_DERIVE: []const u8 = "utf8e-sd"; // Seed derivation from key+codepoints
+pub const SHAKE_PREFIX_PERMUTATION: []const u8 = "utf8e-pr"; // Permutation generation from seed
+pub const SHAKE_PREFIX_CLASS1: []const u8 = "utf8e-c1"; // Class1 permutation from tweak
+
 /// Context type (all classes use same radix)
 const CtxType = fast.Context(RADIX, SBOX_COUNT);
 
@@ -143,6 +149,7 @@ fn deriveSeedFromCodepoints(key: *const [16]u8, codepoints: []const u21, allocat
     var seed: [SEED_SIZE]u8 = undefined;
     const TurboShake = std.crypto.hash.sha3.TurboShake128(null);
     var shake = TurboShake.init(.{});
+    shake.update(SHAKE_PREFIX_SEED_DERIVE);
     shake.update(key);
     shake.update(cp_bytes);
     shake.squeeze(&seed);
@@ -163,6 +170,7 @@ fn generatePermutationFromSeed(seed: *const [SEED_SIZE]u8, n: usize, allocator: 
     // Fisher-Yates shuffle using TurboSHAKE128 as PRNG
     const TurboShake = std.crypto.hash.sha3.TurboShake128(null);
     var shake = TurboShake.init(.{});
+    shake.update(SHAKE_PREFIX_PERMUTATION);
     shake.update(seed);
 
     for (0..n) |i| {
@@ -406,7 +414,10 @@ pub const Utf8Cipher = struct {
                 // For class1, generate a tweak-dependent permutation with seed
                 var seed: [SEED_SIZE]u8 = undefined;
                 const TurboShake = std.crypto.hash.sha3.TurboShake128(null);
-                TurboShake.hash(tweak, &seed, .{});
+                var shake = TurboShake.init(.{});
+                shake.update(SHAKE_PREFIX_CLASS1);
+                shake.update(tweak);
+                shake.squeeze(&seed);
 
                 var perm: [DOMAIN_SIZE_CLASS1]u8 = undefined;
                 fisherYatesShuffle(DOMAIN_SIZE_CLASS1, &seed, &perm);
@@ -446,7 +457,10 @@ pub const Utf8Cipher = struct {
                 // For class1, generate same tweak-dependent permutation with seed
                 var seed: [SEED_SIZE]u8 = undefined;
                 const TurboShake = std.crypto.hash.sha3.TurboShake128(null);
-                TurboShake.hash(tweak, &seed, .{});
+                var shake = TurboShake.init(.{});
+                shake.update(SHAKE_PREFIX_CLASS1);
+                shake.update(tweak);
+                shake.squeeze(&seed);
 
                 var perm: [DOMAIN_SIZE_CLASS1]u8 = undefined;
                 fisherYatesShuffle(DOMAIN_SIZE_CLASS1, &seed, &perm);
@@ -511,7 +525,10 @@ pub const Utf8Cipher = struct {
         // Generate IV from base tweak using TurboSHAKE128
         var iv: [IV_SIZE]u8 = undefined;
         const TurboShake = std.crypto.hash.sha3.TurboShake128(null);
-        TurboShake.hash(tweak, &iv, .{});
+        var shake = TurboShake.init(.{});
+        shake.update(SHAKE_PREFIX_IV);
+        shake.update(tweak);
+        shake.squeeze(&iv);
 
         var prev_ciphertext_bytes: [PREV_CIPHERTEXT_BUFFER_SIZE]u8 = undefined;
         var prev_len: usize = iv.len;
@@ -640,7 +657,10 @@ pub const Utf8Cipher = struct {
         // Generate same IV from base tweak using TurboSHAKE128
         var iv: [IV_SIZE]u8 = undefined;
         const TurboShake = std.crypto.hash.sha3.TurboShake128(null);
-        TurboShake.hash(tweak, &iv, .{});
+        var shake = TurboShake.init(.{});
+        shake.update(SHAKE_PREFIX_IV);
+        shake.update(tweak);
+        shake.squeeze(&iv);
 
         var prev_ciphertext_bytes: [PREV_CIPHERTEXT_BUFFER_SIZE]u8 = undefined;
         var prev_len: usize = iv.len;
