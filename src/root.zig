@@ -547,7 +547,7 @@ pub const Utf8Cipher = struct {
         }
 
         // Step 1: Decode all plaintext codepoints
-        var plaintext_cps = std.ArrayList(u21){};
+        var plaintext_cps: std.ArrayList(u21) = .empty;
         defer plaintext_cps.deinit(self.allocator);
 
         var view = std.unicode.Utf8View.initUnchecked(plaintext);
@@ -666,7 +666,7 @@ pub const Utf8Cipher = struct {
         }
 
         // Step 1: Decode all shuffled ciphertext codepoints
-        var shuffled_cps = std.ArrayList(u21){};
+        var shuffled_cps: std.ArrayList(u21) = .empty;
         defer shuffled_cps.deinit(self.allocator);
 
         var view = std.unicode.Utf8View.initUnchecked(ciphertext);
