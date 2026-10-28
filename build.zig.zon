@@ -33,8 +33,8 @@
     // internet connectivity.
     .dependencies = .{
         .fast = .{
-            .url = "git+https://github.com/jedisct1/zig-fast.git#04614b32b51ac65e178b1718de229aaf9fe61a88",
-            .hash = "fast-0.0.0-BxbRKSEkAQBVu2Q_XMw3GpnYcAJrEo1TIIbnZ-Dr0QCi",
+            .url = "git+https://github.com/jedisct1/zig-fast.git#423d5dd95736e5be6a115441fed18f2881cc2e3b",
+            .hash = "fast-0.0.0-BxbRKV8iAQBj36gpDgk26UebNhAkykG0S0R9tcbtZ50V",
         },
     },
     .paths = .{
